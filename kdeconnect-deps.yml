@@ -65,6 +65,8 @@ modules:
       - libgraphviz-dev
       - graphviz
       - xsltproc
-      - libxmltok1t64
-      - libxmltok1-dev
+      # - libxmltok1t64
+      # - libxmltok1-dev
       - xmlto
+      - libxmltooling-dev
+      - libxmltooling11
