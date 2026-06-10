@@ -66,7 +66,7 @@ jobs:
       - name: Build KDE Connect (nightly)
         run: |
           kdesrc-build --generate-config
-          kdesrc-build --include-dependencies --reconfigure --async kdeconnect-kde
+          kdesrc-build --include-dependencies --reconfigure --async kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
           ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
 
       # -------------------------
