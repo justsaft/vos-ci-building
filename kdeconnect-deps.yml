@@ -71,6 +71,8 @@ modules:
       - xmlto
       - libxmltooling-dev
       - libxmltooling11
+      - libshiboken6-dev
+      - libpyside6-dev
 
 - name: python-deps
   type: apt
