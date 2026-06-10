@@ -59,3 +59,12 @@ modules:
       - libkf6itemmodels-dev
       - libkf6qqc2desktopstyle-dev
       - qml6-module-org-kde-kquickcontrolsaddons
+      - libexpat1-dev
+      - expat
+      - libexpat1
+      - libgraphviz-dev
+      - graphviz
+      - xsltproc
+      - libxmltok1t64
+      - libxmltok1-dev
+      - xmlto
