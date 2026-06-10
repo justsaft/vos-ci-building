@@ -66,18 +66,28 @@ jobs:
       - name: Build KDE Connect (nightly)
         run: |
           kdesrc-build --generate-config
-          kdesrc-build --include-dependencies --reconfigure --async kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
+          kdesrc-build --include-dependencies --reconfigure --async kdeconnect
           ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
 
       # -------------------------
-      # Package artifact
-      - name: Package install dir
+      # Package artifacts
+      - name: Create archives
         run: |
-          tar -czf kdeconnect-nightly.tar.gz -C /opt/kde/usr .
+          tar -czf kdeconnect-nightly.tar.gz -C /opt/kde/usr . || true
+          tar -czf logs.tar.gz -C /github/home/kde/src/log/latest/ .
+
+      # -------------------------
+      # Upload log archive
+      - name: Upload log archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdeconnect-nightly-build-logs
+          path: logs.tar.gz
 
       # -------------------------
       # Upload artifact
       - name: Upload artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: kdeconnect-nightly
