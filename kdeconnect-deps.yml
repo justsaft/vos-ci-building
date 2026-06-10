@@ -39,6 +39,9 @@ modules:
       - ca-certificates
       - mdbook
       - appstream
+      - quilt
+      - libjson-perl
+      - libjson-xs-perl
       - debhelper
       - libkf6modemmanagerqt-dev
       - libkf6statusnotifieritem-dev
