@@ -1,7 +1,7 @@
 name: kdesrc-build-install
 type: shell
 commands:
-  - apt-get build-dep -y wayland kdeconnect
+  - apt-get build-dep -y wayland kdeconnect kdoctools
   - ln -sf /usr/bin/qmake6 /usr/bin/qmake
   - git clone --depth=1 https://invent.kde.org/sdk/kdesrc-build.git /usr/kdesrc-build
   - /usr/kdesrc-build/kdesrc-build --initial-setup
@@ -65,6 +65,8 @@ modules:
       - libxmltooling11
       - libshiboken6-dev
       - libpyside6-dev
+      - libkf5archive-dev
+      - libkf5i18n-dev
 
 - name: python-deps
   type: apt
