@@ -114,33 +114,30 @@ jobs:
 
     - name: Check base image architecture support
       run: |
-        sudo apt-get install -y skopeo
         BASE_IMAGE="${{ needs.check_update.outputs.base_image }}"
-        ARCH="${{ matrix.arch }}"
-
-        echo "Checking if $BASE_IMAGE supports the $ARCH architecture..."
-
-        # Get the manifest and check if the architecture is supported
+        TARGET_ARCH="${{ matrix.arch }}"
+        echo "Checking if $BASE_IMAGE supports the $TARGET_ARCH architecture..."
         MANIFEST=$(skopeo inspect --raw docker://$BASE_IMAGE | jq -r '.')
 
-        # Check if it's a manifest list (multi-arch) or a single manifest
         if echo "$MANIFEST" | jq -e '.manifests' > /dev/null 2>&1; then
-          # It's a manifest list, check for our architecture
-          if echo "$MANIFEST" | jq -e ".manifests[] | select(.platform.architecture==\"$ARCH\")" > /dev/null 2>&1; then
-            echo "✓ Base image supports $ARCH architecture"
+          if echo "$MANIFEST" | jq -e ".manifests[] | select(.platform.architecture==\"$TARGET_ARCH\")" > /dev/null 2>&1; then
+            echo "Base image supports $TARGET_ARCH architecture. Continuing"
           else
-            echo "✗ Base image does NOT support $ARCH architecture"
+            echo "Base image does NOT support $TARGET_ARCH architecture. Stopping here."
             echo "Supported architectures:"
             echo "$MANIFEST" | jq -r '.manifests[].platform.architecture' | sort | uniq
             exit 1
           fi
         else
-          # It's a single manifest, get its architecture
           IMAGE_ARCH=$(echo "$MANIFEST" | jq -r '.architecture')
-          if [ "$IMAGE_ARCH" = "$ARCH" ]; then
-            echo "✓ Base image supports $ARCH architecture"
+          if [ "$IMAGE_ARCH" = "null" ]; then
+            IMAGE_ARCH="amd64"
+            echo "Architecture field is null, assuming amd64"
+          fi
+          if [ "$IMAGE_ARCH" = "$TARGET_ARCH" ]; then
+            echo "Base image supports $TARGET_ARCH architecture. Continuing"
           else
-            echo "✗ Base image only supports $IMAGE_ARCH, but we're building for $ARCH"
+            echo "Base image only supports $IMAGE_ARCH, but we're building for $TARGET_ARCH. Stopping here"
             exit 1
           fi
         fi
