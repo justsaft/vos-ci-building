@@ -11,14 +11,6 @@ modules:
   type: apt
   sources:
     - packages:
-      - git
-      - calc
-      - qmake6
-      - cmake
-      - meson
-      - ninja-build
-      - build-essential
-      - extra-cmake-modules
       - qt6-base-dev
       - qt6-tools-dev
       - qt6-tools-dev-tools
@@ -90,3 +82,21 @@ modules:
       - python3-twisted
       - python3-cairo
       - python3-pip
+
+- name: build-essential
+  type: apt
+  sources:
+    - packages:
+      - git
+      - calc
+      - qmake6
+      - cmake
+      - meson
+      - ninja-build
+      - build-essential
+      - extra-cmake-modules
+      - gcc
+      - g++
+      - clang
+      - libclang-dev
+      - llvm-dev
