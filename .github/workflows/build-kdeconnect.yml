@@ -34,10 +34,12 @@ jobs:
           echo "count=$(nproc)" >> $GITHUB_OUTPUT
 
       # -------------------------
-      # Write kdesrc-build config
-      - name: Write kdesrc-build config
+      # Write kdesrc-build config and compute hash
+      - name: Write kdesrc-build config and compute hash
+        id: config
         run: |
           mkdir -p ~/.config
+          # Create config without CPU count first for stable hash
           cat << "EOF" > ~/.config/kdesrc-buildrc
           global
               source-dir /opt/kde/src
@@ -47,7 +49,6 @@ jobs:
               cmake-options -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=OFF
               branch-group kf6-qt6
               include-dependencies true
-              num-cores ${{ steps.cpus.outputs.count }}
               num-cores-low-mem 2
               install-environment-driver true
               install-session-driver false
@@ -59,6 +60,10 @@ jobs:
           include ${module-definitions-dir}/kf6-qt6.ksb
           EOF
 
+          CONFIG_HASH=$(sha256sum ~/.config/kdesrc-buildrc | cut -d' ' -f1 | cut -c1-8)
+          echo "hash=$CONFIG_HASH" >> $GITHUB_OUTPUT
+          sed -i "/num-cores-low-mem/i\        num-cores ${{ steps.cpus.outputs.count }}" ~/.config/kdesrc-buildrc
+
       # -------------------------
       # Cache KDE sources + build
       - name: Restore KDE cache
@@ -67,8 +72,9 @@ jobs:
           path: |
             /opt/kde/src
             /opt/kde/build
-          key: kde-${{ runner.os }}-${{ hashFiles('~/.config/kdesrc-buildrc') }}
+          key: kde-${{ runner.os }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
           restore-keys: |
+            kde-${{ runner.os }}-${{ github.ref_name }}-
             kde-${{ runner.os }}-
 
       # -------------------------
@@ -121,4 +127,4 @@ jobs:
           path: |
             /opt/kde/src
             /opt/kde/build
-          key: kde-${{ runner.os }}-${{ github.run_id }}
+          key: kde-${{ runner.os }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
