@@ -53,7 +53,7 @@ jobs:
               install-environment-driver true
               install-session-driver false
               stop-on-failure true
-              do-not-compile python
+              do-not-compile python kdoctools
               generate-vscode-project-config false
               directory-layout flat
           end global
