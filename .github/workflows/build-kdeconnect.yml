@@ -37,6 +37,7 @@ jobs:
       # Write kdesrc-build config
       - name: Write kdesrc-build config
         run: |
+          mkdir -p ~/.config
           cat << "EOF" > ~/.config/kdesrc-buildrc
           global
               source-dir /opt/kde/src
