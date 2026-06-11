@@ -21,6 +21,50 @@ jobs:
         uses: actions/checkout@v4
 
       # -------------------------
+      # Setup GITHUB_PATH
+      - name: Setup GITHUB_PATH
+        run: |
+          echo "/usr/kdesrc-build" >> $GITHUB_PATH
+
+      # -------------------------
+      # Get number of CPU cores
+      - name: Get number of CPU cores
+        id: cpus
+        run: |
+          from os import environ, sched_getaffinity
+
+          num_cpus = len(sched_getaffinity(0))
+          output_file = environ["GITHUB_OUTPUT"]
+          with open(output_file, "a", encoding="utf-8") as output_stream:
+              output_stream.write(f"count={num_cpus}\n")
+        shell: python
+
+      # -------------------------
+      # Write kdesrc-build config
+      - name: Write kdesrc-build config
+        run: |
+          cat << "EOF" > ~/.config/kdesrc-buildrc
+          global
+              source-dir /opt/kde/src
+              build-dir /opt/kde/build
+              install-dir /opt/kde/usr
+              cmake-generator Kate - Ninja
+              cmake-options -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=OFF
+              branch-group kf6-qt6
+              include-dependencies true
+              num-cores ${{ steps.cpus.outputs.count }}
+              num-cores-low-mem 2
+              install-environment-driver true
+              install-session-driver false
+              stop-on-failure true
+              do-not-compile python
+              generate-vscode-project-config false
+              directory-layout flat
+          end global
+          include ${module-definitions-dir}/kf6-qt6.ksb
+          EOF
+
+      # -------------------------
       # Cache KDE sources + build
       - name: Restore KDE cache
         uses: actions/cache@v4
@@ -28,57 +72,35 @@ jobs:
           path: |
             /opt/kde/src
             /opt/kde/build
-          key: kde-${{ runner.os }}-${{ hashFiles('kdesrc-buildrc') }}
+          key: kde-${{ runner.os }}-${{ hashFiles('~/.config/kdesrc-buildrc') }}
           restore-keys: |
             kde-${{ runner.os }}-
 
       # -------------------------
-      # Setup kdesrc-build
-      - name: Setup kdesrc-build
-        run: |
-          echo "/usr/kdesrc-build" >> $GITHUB_PATH
-
-      # -------------------------
-      # Write kdesrc-build config
-      - name: Create config
-        if: false
-        run: |
-          cat << 'EOF' > kdesrc-buildrc
-          global
-              set-env MAKEFLAGS -j${num-cores}
-              source-dir /opt/kde/src
-              build-dir /opt/kde/build
-              install-dir /opt/kde/usr
-              cmake-generator Ninja
-              cmake-options -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=OFF
-              branch-group kf6-qt6
-              do-not-compile python
-          end global
-
-          module kdeconnect-kde
-              repository kdeconnect-kde
-              include-dependencies true
-          end module
-          EOF
-
-      # -------------------------
       # Build KDE Connect
-      - name: Build KDE Connect (nightly)
+      - name: Build KDE Connect
         run: |
-          kdesrc-build --generate-config
-          kdesrc-build --include-dependencies --reconfigure --async kdeconnect
+          kdesrc-build --include-dependencies --do-not-compile python --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
           ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
 
       # -------------------------
       # Package artifacts
-      - name: Create archives
+      - name: Create artifact archives
+        if: success()
         run: |
-          tar -czf kdeconnect-nightly.tar.gz -C /opt/kde/usr . || true
-          tar -czf logs.tar.gz -C /github/home/kde/src/log/latest/ .
+          tar -czf kdeconnect-nightly.tar.gz -C /opt/kde/usr .
+
+      # -------------------------
+      # Package logs artifact
+      - name: Create log archive
+        if: false
+        run: |
+          tar -czf logs.tar.gz -C /github/home/kde/src/log/latest-by-phase/ .
 
       # -------------------------
       # Upload log archive
       - name: Upload log archive artifact
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: kdeconnect-nightly-build-logs
@@ -98,6 +120,7 @@ jobs:
       # -------------------------
       # Save updated cache
       - name: Save KDE cache
+        if: success()
         uses: actions/cache@v4
         with:
           path: |
