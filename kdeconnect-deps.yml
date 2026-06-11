@@ -2,7 +2,7 @@ name: kdesrc-build-install
 type: shell
 commands:
   - apt-get build-dep -y wayland kdeconnect
-  - ln -s /usr/bin/qmake6 /usr/bin/qmake
+  - ln -sf /usr/bin/qmake6 /usr/bin/qmake
   - git clone --depth=1 https://invent.kde.org/sdk/kdesrc-build.git /usr/kdesrc-build
   - /usr/kdesrc-build/kdesrc-build --initial-setup
 
