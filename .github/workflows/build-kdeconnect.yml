@@ -81,7 +81,7 @@ jobs:
       # Build KDE Connect
       - name: Build KDE Connect
         run: |
-          kdesrc-build --include-dependencies --do-not-compile python --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
+          kdesrc-build --include-dependencies --do-not-compile python --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/*.log
           ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
 
       # -------------------------
