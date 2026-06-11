@@ -21,6 +21,7 @@ stages:
     commands:
       - lpkg --unlock
       - apt-get update
+      - apt install -y sudo
 
   - name: includes
     type: includes

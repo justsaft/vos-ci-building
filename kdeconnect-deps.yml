@@ -67,6 +67,7 @@ modules:
       - libpyside6-dev
       - libkf5archive-dev
       - libkf5i18n-dev
+      - libpcre2-dev
 
 - name: python-deps
   type: apt
