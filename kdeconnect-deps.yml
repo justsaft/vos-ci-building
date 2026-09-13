@@ -70,6 +70,7 @@ modules:
       - libpcre2-dev
       - wayland-scanner++
       - libwayland-dev
+      - wayland-protocols
 
 - name: python-deps
   type: apt
