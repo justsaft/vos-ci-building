@@ -13,7 +13,8 @@ stages:
     DEBIAN_FRONTEND: noninteractive
   runs:
     commands:
-      - echo 'APT::Install-Recommends "1";' > /etc/apt/apt.conf.d/01norecommends
+      - echo 'APT::Install-Recommends "0";' > /etc/apt/apt.conf.d/01norecommends
+      - echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/01norecommends
 
   modules:
   - name: init-setup
@@ -21,7 +22,7 @@ stages:
     commands:
       - lpkg --unlock
       - apt-get update
-      - apt install -y sudo
+      - apt-get install -y --no-install-recommends sudo
 
   - name: includes
     type: includes
@@ -31,8 +32,8 @@ stages:
   - name: cleanup
     type: shell
     commands:
-    - apt autoremove -y
-    - apt clean
+    - apt-get clean
+    - rm -rf /var/lib/apt/lists/*
     - lpkg --lock
 
   - name: sysconf-setup
