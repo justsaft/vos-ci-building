@@ -15,29 +15,59 @@ stages:
     commands:
       - echo 'APT::Install-Recommends "0";' > /etc/apt/apt.conf.d/01norecommends
       - echo 'APT::Install-Suggests "0";' >> /etc/apt/apt.conf.d/01norecommends
+  cleanup:
+    - /boot/initrd.img*
+    - /tmp/*
+    - /var/cache/apt/pkgcache.bin
+    - /var/cache/debconf
+    - /var/cache/dictionaries-common
+    - /var/cache/fontconfig
+    - /var/cache/ldconfig
+    - /var/cache/man
+    - /var/lib/dbus/machine-id
+    - /var/log/*
 
   modules:
   - name: init-setup
     type: shell
     commands:
-      - apt-get update
-      - apt-get install -y --no-install-recommends sudo
+    - echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"' > /etc/environment
+    - sed -i '4,10d' /etc/profile
+    - apt update
+    - apt clean
+    - apt-mark hold snapd gnome-software-plugin-snap
+    - apt -y -qq --no-install-recommends install squashfs-tools minisign sudo
 
-  - name: includes
+  - name: vanilla-tools
+    type: shell
+    sources:
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-amd64.tar.gz
+        checksum: aef32f07820e0993e534e6bccfa1a6daae6c8c6f0543d3e073f4f121f2ef2e31
+        only-arches: [amd64]
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-arm64.tar.gz
+        checksum: e59b098338de6f6071376e07ec79b17be6c8f0a0dd354fab128e1e86a36d0862
+        only-arches: [arm64]
+    commands:
+      - mkdir -p /usr/bin
+      - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
+      - chmod +x /usr/bin/lpkg
+
+  - name: dependencies
     type: includes
     includes:
       - kdeconnect-deps.yml
 
-  - name: cleanup
+  - name: cleanup-and-sysconf-setup
     type: shell
     commands:
-    - apt-get clean
-    - rm -rf /var/lib/apt/lists/*
-
-  - name: sysconf-setup
-    type: shell
-    commands:
+      - SUDO_FORCE_REMOVE=yes apt purge -y sudo
+      - apt autoremove -y
+      - apt clean
       - rsync -a /etc/ /sysconf/
+    cleanup:
+      - /sysconf/resolv.conf
 
   - name: fsguard
     type: fsguard
@@ -53,8 +83,9 @@ stages:
           - rm -f ./minisign.pub ./minisign.key
           - chmod +x /usr/share/init.d/010-fsguard.sh
 
-  - name: cleanup2
-    type: shell
+
+- id: initrd
+  base: build
+  runs:
     commands:
-      - rm -rf /tmp/*
-      - rm -rf /var/tmp/*
+      - touch $(readlink -f /initrd.img)
