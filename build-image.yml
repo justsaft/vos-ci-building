@@ -1,6 +1,6 @@
 name: Vanilla Desktop
 id: vanilla-ci-building
-vibversion: 1.0.7
+vibversion: 1.1.0
 
 stages:
 - id: build
