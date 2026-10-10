@@ -80,7 +80,39 @@ jobs:
       # Build KDE Connect
       - name: Build KDE Connect
         run: |
-          kdesrc-build --include-dependencies --async --reconfigure kdeconnect || cat /opt/kde/src/log/latest/*/error.log
+          set +e
+          kdesrc-build --include-dependencies --async --reconfigure kdeconnect
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "::group::kdesrc-build log directory (latest run)"
+            find "$KDE_SRC/log/latest" -maxdepth 2 2>/dev/null | sort
+            echo "::endgroup::"
+
+            for f in "$KDE_SRC"/log/latest/*/error.log; do
+              [ -e "$f" ] || continue
+              echo "::group::error.log — $f"
+              cat "$f"
+              echo "::endgroup::"
+            done
+
+            for f in "$KDE_SRC"/log/latest/*/cmake.log; do
+              [ -e "$f" ] || continue
+              echo "::group::cmake.log — $f"
+              cat "$f"
+              echo "::endgroup::"
+            done
+
+            for f in "$KDE_SRC"/log/latest/*/build-1.log "$KDE_SRC"/log/latest/*/build.log; do
+              [ -e "$f" ] || continue
+              echo "::group::build log (tail -300) — $f"
+              tail -n 300 "$f"
+              echo "::endgroup::"
+            done
+          fi
+
+          exit "$status"
 
       # -------------------------
       # Package artifacts
@@ -92,18 +124,19 @@ jobs:
       # -------------------------
       # Package logs artifact
       - name: Create log archive
-        if: false
+        if: always()
         run: |
-          tar -czf logs.tar.gz -C /opt/kde/src/log/latest .
+          tar -czf logs.tar.gz -C "$KDE_SRC/log/latest" .
 
       # -------------------------
       # Upload log archive
       - name: Upload log archive artifact
-        if: false
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kdeconnect-nightly-build-logs
           path: logs.tar.gz
+          if-no-files-found: warn
 
       # -------------------------
       # Upload artifact
