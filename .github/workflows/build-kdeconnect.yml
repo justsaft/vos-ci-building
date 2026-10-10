@@ -39,7 +39,6 @@ jobs:
         id: config
         run: |
           mkdir -p ~/.config
-          # Create config without CPU count first for stable hash
           cat << "EOF" > ~/.config/kdesrc-buildrc
           global
               source-dir /opt/kde/src
@@ -53,7 +52,7 @@ jobs:
               install-environment-driver true
               install-session-driver false
               stop-on-failure true
-              do-not-compile python kdoctools
+              do-not-compile kdoctool
               generate-vscode-project-config false
               directory-layout flat
           end global
@@ -81,7 +80,7 @@ jobs:
       # Build KDE Connect
       - name: Build KDE Connect
         run: |
-          kdesrc-build --include-dependencies --do-not-compile python --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/*.log
+          kdesrc-build --include-dependencies --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
           ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
 
       # -------------------------
