@@ -80,8 +80,7 @@ jobs:
       # Build KDE Connect
       - name: Build KDE Connect
         run: |
-          kdesrc-build --include-dependencies --async --reconfigure kdeconnect || cat /github/home/kde/src/log/latest/*/error.log
-          ldd /opt/kde/usr/kdeconnect-kde > /opt/kdeconnect.txt
+          kdesrc-build --include-dependencies --async --reconfigure kdeconnect || cat /opt/kde/src/log/latest/*/error.log
 
       # -------------------------
       # Package artifacts
@@ -95,7 +94,7 @@ jobs:
       - name: Create log archive
         if: false
         run: |
-          tar -czf logs.tar.gz -C /github/home/kde/src/log/latest-by-phase/ .
+          tar -czf logs.tar.gz -C /opt/kde/src/log/latest .
 
       # -------------------------
       # Upload log archive
