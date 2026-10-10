@@ -1,0 +1,82 @@
+name: 'Build LACT (prebuilt artifacts for Vib)'
+
+on:
+  workflow_dispatch:
+    inputs:
+      lact_version:
+        description: 'LACT git tag to build (e.g. v0.10.1)'
+        required: true
+        default: 'v0.10.1'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/justsaft/vanilla-ci-building:main
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config git curl ca-certificates \
+            libgtk-4-dev libadwaita-1-dev libdrm-dev libudev-dev \
+            libdisplay-info-dev clang libclang-dev
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Clone LACT
+        run: git clone --branch "${{ github.event.inputs.lact_version }}" --depth 1 https://github.com/ilya-zlobintsev/LACT /tmp/lact-src
+
+      - name: Build and stage install
+        working-directory: /tmp/lact-src
+        run: |
+          cargo build --release -p lact
+          make install DESTDIR=/tmp/lact-stage PREFIX=/usr
+
+      - name: Package artifact
+        run: |
+          cd /tmp/lact-stage
+          tar -czf /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz .
+          sha256sum /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lact-${{ matrix.arch }}
+          path: /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: lact-*
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lact-${{ github.event.inputs.lact_version }}"
+          sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --title "LACT ${{ github.event.inputs.lact_version }} (prebuilt)" \
+            --notes "Prebuilt LACT artifacts for Vib, built in vos-ci-building." \
+          || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
