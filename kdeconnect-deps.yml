@@ -71,6 +71,8 @@ modules:
       - wayland-scanner++
       - libwayland-dev
       - wayland-protocols
+      - python3-attr
+      - python3-jinja2
 
 - name: python-deps
   type: apt
