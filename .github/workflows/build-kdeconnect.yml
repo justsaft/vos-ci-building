@@ -152,7 +152,7 @@ jobs:
       # -------------------------
       # Save updated cache
       - name: Save KDE cache
-        if: success()
+        if: always()
         uses: actions/cache@v4
         with:
           path: |
