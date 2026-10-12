@@ -5,7 +5,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
 
     container:
       image: ghcr.io/justsaft/vanilla-ci-building:main
@@ -74,10 +82,13 @@ jobs:
           path: |
             /opt/kde/src
             /opt/kde/build
-          key: kde-${{ runner.os }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
+          # Keyed by matrix.arch, not runner.os: both runners report "Linux",
+          # so keying on runner.os would have the amd64 and arm64 legs share
+          # (and clobber) the same cache.
+          key: kde-${{ matrix.arch }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
           restore-keys: |
-            kde-${{ runner.os }}-${{ github.ref_name }}-
-            kde-${{ runner.os }}-
+            kde-${{ matrix.arch }}-${{ github.ref_name }}-
+            kde-${{ matrix.arch }}-
 
       # -------------------------
       # Build KDE Connect
@@ -136,7 +147,7 @@ jobs:
       - name: Create artifact archives
         if: success()
         run: |
-          tar -czf kdeconnect-nightly.tar.gz -C /opt/kde/usr .
+          tar -czf kdeconnect-nightly-${{ matrix.arch }}.tar.gz -C /opt/kde/usr .
 
       # -------------------------
       # Upload artifact
@@ -144,9 +155,9 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: kdeconnect-nightly
+          name: kdeconnect-nightly-${{ matrix.arch }}
           path: |
-            kdeconnect-nightly.tar.gz
+            kdeconnect-nightly-${{ matrix.arch }}.tar.gz
             /opt/kdeconnect.txt
 
       # -------------------------
@@ -154,16 +165,18 @@ jobs:
       - name: Create log archive
         if: always()
         run: |
-          tar -czf logs.tar.gz -C "$KDE_SRC/log/latest" .
+          tar -czf logs-${{ matrix.arch }}.tar.gz -C "$KDE_SRC/log/latest" .
 
       # -------------------------
       # Upload log archive
+      # Named without the "kdeconnect-nightly" prefix so it's never picked up
+      # by the release job's artifact pattern below.
       - name: Upload log archive artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kdeconnect-nightly-build-logs
-          path: logs.tar.gz
+          name: kdeconnect-build-logs-${{ matrix.arch }}
+          path: logs-${{ matrix.arch }}.tar.gz
           if-no-files-found: warn
 
       # -------------------------
@@ -175,7 +188,7 @@ jobs:
           path: |
             /opt/kde/src
             /opt/kde/build
-          key: kde-${{ runner.os }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
+          key: kde-${{ matrix.arch }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
 
   release:
     needs: build
@@ -186,7 +199,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist
-          pattern: kdeconnect-nightly*
+          pattern: kdeconnect-nightly-*
           merge-multiple: true
 
       - name: Publish release
@@ -195,12 +208,12 @@ jobs:
         run: |
           TAG="kdeconnect-nightly"
           BUILD_DATE="$(date -u +%Y-%m-%d)"
-          sha256sum dist/kdeconnect-nightly.tar.gz | tee dist/SHA256SUMS
-          NOTES="Prebuilt KDE Connect nightly artifact for Vib, built in vos-ci-building (branch-group kf6-qt6, kdeconnect-kde pinned to release/26.08). Last updated $BUILD_DATE from run ${{ github.run_id }}."
-          gh release create "$TAG" dist/kdeconnect-nightly.tar.gz dist/SHA256SUMS \
+          sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
+          NOTES="Prebuilt KDE Connect nightly artifacts (amd64, arm64) for Vib, built in vos-ci-building (branch-group kf6-qt6, kdeconnect-kde pinned to release/26.08). Last updated $BUILD_DATE from run ${{ github.run_id }}."
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
             --title "KDE Connect (nightly, prebuilt)" \
             --notes "$NOTES" \
             --prerelease \
-          || gh release upload "$TAG" dist/kdeconnect-nightly.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
+          || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
           gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES"
