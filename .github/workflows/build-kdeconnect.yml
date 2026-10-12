@@ -151,14 +151,21 @@ jobs:
 
       # -------------------------
       # Upload artifact
+      #
+      # Only the tar.gz here on purpose: upload-artifact computes the
+      # artifact's root as the least common ancestor of every path in this
+      # list, before checking which ones exist. A leftover absolute path
+      # like /opt/kdeconnect.txt (which nothing in this workflow creates)
+      # drags that ancestor down to "/", so the tar.gz — even though it's
+      # the only file that actually exists — gets nested several
+      # directories deep inside the artifact instead of sitting at its
+      # root. That breaks the release job's flat `dist/*.tar.gz` glob.
       - name: Upload artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: kdeconnect-nightly-${{ matrix.arch }}
-          path: |
-            kdeconnect-nightly-${{ matrix.arch }}.tar.gz
-            /opt/kdeconnect.txt
+          path: kdeconnect-nightly-${{ matrix.arch }}.tar.gz
 
       # -------------------------
       # Package logs artifact
