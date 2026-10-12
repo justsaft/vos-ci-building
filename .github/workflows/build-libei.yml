@@ -1,0 +1,116 @@
+name: 'Build libei (prebuilt artifacts for Vib)'
+
+# No Debian suite packages libei >= 1.6 yet, but kdeconnect-kde's mousepad
+# plugin requires it (see libei-from-source.yml, which builds it into
+# vos-ci-building itself so kdeconnect-kde can be compiled/linked against
+# it here). libei is a dynamically-linked runtime dependency though, not
+# something kdeconnect statically embeds — so the main VanillaOS image
+# also needs libei.so present at runtime. This workflow publishes libei
+# as its own prebuilt release asset, the same way build-lact.yml and
+# build-kdeconnect.yml do, so the main image can pull in a ready-made
+# tarball instead of rebuilding libei from source itself.
+
+on:
+  workflow_dispatch:
+    inputs:
+      libei_min_version:
+        description: 'Minimum libei version to resolve a git tag for (e.g. 1.6.0)'
+        required: true
+        default: '1.6.0'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/justsaft/vanilla-ci-building:main
+
+    steps:
+      # git, meson, ninja, pkg-config, python3-attr/jinja2 etc. are already
+      # baked into vanilla-ci-building (see kdeconnect-deps.yml), so no
+      # separate dependency-install step is needed here.
+
+      - name: Resolve libei git tag
+        id: resolve
+        run: |
+          set -e
+          MIN_VERSION="${{ github.event.inputs.libei_min_version }}"
+          TAG="$(git ls-remote --tags https://gitlab.freedesktop.org/libinput/libei.git \
+            | awk -F/ '{print $NF}' | grep -E "^(v)?${MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
+          if [ -z "$TAG" ]; then
+            echo "::error::could not find a git tag matching libei ${MIN_VERSION} on gitlab.freedesktop.org/libinput/libei - check https://gitlab.freedesktop.org/libinput/libei/-/tags by hand."
+            exit 1
+          fi
+          echo "Resolved libei tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Clone libei
+        run: git clone --branch "${{ steps.resolve.outputs.tag }}" --depth 1 https://gitlab.freedesktop.org/libinput/libei.git /tmp/libei-src
+
+      - name: Build
+        run: |
+          meson setup /tmp/libei-build /tmp/libei-src \
+            --prefix=/usr --buildtype=release \
+            -Dtests=disabled -Ddocumentation='[]' -Dliboeffis=disabled
+          ninja -C /tmp/libei-build
+
+      - name: Stage install
+        run: |
+          DESTDIR=/tmp/libei-stage ninja -C /tmp/libei-build install
+          # Sanity check: fail loudly if the staged .pc doesn't actually
+          # satisfy the version we set out to build.
+          PKG_CONFIG_PATH=/tmp/libei-stage/usr/lib/$(uname -m)-linux-gnu/pkgconfig:/tmp/libei-stage/usr/lib/pkgconfig \
+            pkg-config --atleast-version="${{ github.event.inputs.libei_min_version }}" libei-1.0 \
+            || PKG_CONFIG_PATH=/tmp/libei-stage/usr/lib/pkgconfig pkg-config --atleast-version="${{ github.event.inputs.libei_min_version }}" libei-1.0
+
+      - name: Package artifact
+        run: |
+          cd /tmp/libei-stage
+          tar -czf /tmp/libei-${{ steps.resolve.outputs.tag }}-${{ matrix.arch }}.tar.gz .
+          sha256sum /tmp/libei-${{ steps.resolve.outputs.tag }}-${{ matrix.arch }}.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libei-${{ matrix.arch }}
+          path: /tmp/libei-${{ steps.resolve.outputs.tag }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: libei-*
+          merge-multiple: true
+
+      - name: Resolve libei git tag
+        id: resolve
+        run: |
+          set -e
+          MIN_VERSION="${{ github.event.inputs.libei_min_version }}"
+          TAG="$(git ls-remote --tags https://gitlab.freedesktop.org/libinput/libei.git \
+            | awk -F/ '{print $NF}' | grep -E "^(v)?${MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="libei-${{ steps.resolve.outputs.tag }}"
+          sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --title "libei ${{ steps.resolve.outputs.tag }} (prebuilt)" \
+            --notes "Prebuilt libei artifacts for Vib, built in vos-ci-building. No Debian suite packages libei >= ${{ github.event.inputs.libei_min_version }} yet (required by kdeconnect-kde's mousepad plugin)." \
+          || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
