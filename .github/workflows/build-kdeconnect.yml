@@ -56,6 +56,9 @@ jobs:
               generate-vscode-project-config false
               directory-layout flat
           end global
+          options kdeconnect-kde
+              branch release/26.08
+          end options
           include ${module-definitions-dir}/kf6-qt6.ksb
           EOF
 
