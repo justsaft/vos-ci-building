@@ -59,6 +59,11 @@ stages:
     includes:
       - kdeconnect-deps.yml
 
+  - name: libei
+    type: includes
+    includes:
+      - libei-from-source.yml
+
   - name: cleanup-and-sysconf-setup
     type: shell
     commands:

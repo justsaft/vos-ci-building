@@ -118,6 +118,20 @@ jobs:
           exit "$status"
 
       # -------------------------
+      # Guard against a "green but did nothing" build: if kdeconnect-kde's
+      # dependency-graph resolution fails (e.g. a bad branch-group/options
+      # override), kdesrc-build can exit 0 having silently built nothing.
+      # Refuse to package/publish in that case rather than shipping a stale
+      # or empty artifact.
+      - name: Verify kdeconnect-kde was actually built
+        if: success()
+        run: |
+          if [ ! -d "$KDE_SRC/log/latest/kdeconnect-kde" ]; then
+            echo "::error::kdeconnect-kde has no log directory for this run — it was not actually processed (dependency graph may have failed to resolve it). Refusing to publish."
+            exit 1
+          fi
+
+      # -------------------------
       # Package artifacts
       - name: Create artifact archives
         if: success()
@@ -162,3 +176,31 @@ jobs:
             /opt/kde/src
             /opt/kde/build
           key: kde-${{ runner.os }}-${{ github.ref_name }}-${{ steps.config.outputs.hash }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: kdeconnect-nightly*
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="kdeconnect-nightly"
+          BUILD_DATE="$(date -u +%Y-%m-%d)"
+          sha256sum dist/kdeconnect-nightly.tar.gz | tee dist/SHA256SUMS
+          NOTES="Prebuilt KDE Connect nightly artifact for Vib, built in vos-ci-building (branch-group kf6-qt6, kdeconnect-kde pinned to release/26.08). Last updated $BUILD_DATE from run ${{ github.run_id }}."
+          gh release create "$TAG" dist/kdeconnect-nightly.tar.gz dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --title "KDE Connect (nightly, prebuilt)" \
+            --notes "$NOTES" \
+            --prerelease \
+          || gh release upload "$TAG" dist/kdeconnect-nightly.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
+          gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES"

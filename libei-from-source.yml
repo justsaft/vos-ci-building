@@ -1,0 +1,46 @@
+name: libei-from-source
+type: shell
+commands:
+  - |
+    set -e
+    LIBEI_MIN_VERSION="1.6.0"
+
+    # Debian ships libei 1.5.0 even in sid as of this writing, but
+    # kdeconnect-kde's mousepad plugin (branch-group kf6-qt6) now requires
+    # >= 1.6. No Debian suite packages it yet, so we build it ourselves.
+    # Build deps (meson, ninja-build, pkg-config, python3, python3-attr,
+    # python3-jinja2, libsystemd-dev, libxml2-dev) come from kdeconnect-deps.yml,
+    # which must run before this module.
+
+    TAG="$(git ls-remote --tags https://gitlab.freedesktop.org/libinput/libei.git \
+      | awk -F/ '{print $NF}' | grep -E "^(v)?${LIBEI_MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
+
+    if [ -z "$TAG" ]; then
+      echo "ERROR: could not find a git tag matching libei ${LIBEI_MIN_VERSION} on" >&2
+      echo "       gitlab.freedesktop.org/libinput/libei - the tag naming may have" >&2
+      echo "       changed. Check https://gitlab.freedesktop.org/libinput/libei/-/tags" >&2
+      echo "       by hand and pin the exact tag here." >&2
+      exit 1
+    fi
+
+    echo "Building libei tag: $TAG"
+
+    git clone --branch "$TAG" --depth 1 https://gitlab.freedesktop.org/libinput/libei.git /tmp/libei-src
+
+    meson setup /tmp/libei-build /tmp/libei-src \
+      --prefix=/usr \
+      --buildtype=release \
+      -Dtests=disabled \
+      -Ddocumentation='[]' \
+      -Dliboeffis=disabled
+
+    ninja -C /tmp/libei-build
+    ninja -C /tmp/libei-build install
+    ldconfig
+
+    rm -rf /tmp/libei-src /tmp/libei-build
+
+    # Sanity check: fail the image build loudly if we still don't meet
+    # the version kdeconnect-kde's mousepad plugin will ask for.
+    pkg-config --atleast-version="$LIBEI_MIN_VERSION" libei-1.0
+    echo "libei installed: $(pkg-config --modversion libei-1.0)"
