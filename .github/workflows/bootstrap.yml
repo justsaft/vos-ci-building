@@ -9,7 +9,7 @@ env:
 
 jobs:
   check_update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     outputs:
       has_updates: ${{ steps.set_output.outputs.has_updates }}
@@ -85,7 +85,7 @@ jobs:
           fi
 
   verify_base_image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs:
       - check_update
 
@@ -100,9 +100,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-26.04
             arch: amd64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-26.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
     needs:
@@ -232,7 +232,7 @@ jobs:
         retention-days: 1
 
   merge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs:
       - build
     permissions:
