@@ -1,10 +1,34 @@
-name: Build KDE Connect (Nightly)
+name: 'Build KDE Connect (prebuilt artifacts for Vib)'
 
 on:
+  schedule:
+    # Fires every Monday; the gate job below lets only every other one through.
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 jobs:
+  # GitHub cron can't express "every two weeks", so the schedule fires weekly
+  # and this job skips every other scheduled run. The parity of whole weeks
+  # since the Unix epoch is stateless and stable across year boundaries (ISO
+  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
+  # a row). Manual runs always go through.
+  gate:
+    runs-on: ubuntu-26.04
+    outputs:
+      run: ${{ steps.parity.outputs.run }}
+    steps:
+      - id: parity
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Off week - skipping this scheduled run."
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -213,13 +237,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="kdeconnect-nightly"
+          # One release per ISO week. Re-running within the same week finds the
+          # existing release and replaces its assets instead of failing.
+          WEEK="$(date -u +%G-W%V)"
+          TAG="kdeconnect-$WEEK"
           BUILD_DATE="$(date -u +%Y-%m-%d)"
           sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
-          NOTES="Prebuilt KDE Connect nightly artifacts (amd64, arm64) for Vib, built in vos-ci-building (branch-group kf6-qt6, kdeconnect-kde pinned to release/26.08). Last updated $BUILD_DATE from run ${{ github.run_id }}."
+          NOTES="Prebuilt KDE Connect artifacts (amd64, arm64) for Vib, built in vos-ci-building in ISO week $WEEK (branch-group kf6-qt6, kdeconnect-kde pinned to release/26.08). Last updated $BUILD_DATE from run ${{ github.run_id }}."
           gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
-            --title "KDE Connect (nightly, prebuilt)" \
+            --title "KDE Connect (prebuilt, $WEEK)" \
             --notes "$NOTES" \
             --prerelease \
           || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber

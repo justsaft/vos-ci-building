@@ -1,15 +1,43 @@
 name: 'Build LACT (prebuilt artifacts for Vib)'
 
 on:
+  schedule:
+    # Fires every Monday; the gate job below lets only every other one through.
+    - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
       lact_version:
-        description: 'LACT git tag to build (e.g. v0.10.1)'
-        required: true
-        default: 'v0.10.1'
+        description: 'LACT git tag to build (e.g. v0.10.1). Empty = the default pinned in env below.'
+        required: false
+
+env:
+  # Scheduled runs have no inputs, so this default is also what they build.
+  # Bump it here to move the biweekly builds to a newer LACT.
+  LACT_VERSION: ${{ github.event.inputs.lact_version || 'v0.10.1' }}
 
 jobs:
+  # GitHub cron can't express "every two weeks", so the schedule fires weekly
+  # and this job skips every other scheduled run. The parity of whole weeks
+  # since the Unix epoch is stateless and stable across year boundaries (ISO
+  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
+  # a row). Manual runs always go through.
+  gate:
+    runs-on: ubuntu-26.04
+    outputs:
+      run: ${{ steps.parity.outputs.run }}
+    steps:
+      - id: parity
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Off week - skipping this scheduled run."
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +65,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Clone LACT
-        run: git clone --branch "${{ github.event.inputs.lact_version }}" --depth 1 https://github.com/ilya-zlobintsev/LACT /tmp/lact-src
+        run: git clone --branch "$LACT_VERSION" --depth 1 https://github.com/ilya-zlobintsev/LACT /tmp/lact-src
 
       - name: Build and stage install
         working-directory: /tmp/lact-src
@@ -48,13 +76,13 @@ jobs:
       - name: Package artifact
         run: |
           cd /tmp/lact-stage
-          tar -czf /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz .
-          sha256sum /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz
+          tar -czf /tmp/lact-${{ env.LACT_VERSION }}-${{ matrix.arch }}.tar.gz .
+          sha256sum /tmp/lact-${{ env.LACT_VERSION }}-${{ matrix.arch }}.tar.gz
 
       - uses: actions/upload-artifact@v7
         with:
           name: lact-${{ matrix.arch }}
-          path: /tmp/lact-${{ github.event.inputs.lact_version }}-${{ matrix.arch }}.tar.gz
+          path: /tmp/lact-${{ env.LACT_VERSION }}-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   release:
@@ -73,10 +101,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="lact-${{ github.event.inputs.lact_version }}"
+          # One release per ISO week. Re-running within the same week finds the
+          # existing release and replaces its assets instead of failing.
+          WEEK="$(date -u +%G-W%V)"
+          TAG="lact-$LACT_VERSION-$WEEK"
           sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
           gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
-            --title "LACT ${{ github.event.inputs.lact_version }} (prebuilt)" \
-            --notes "Prebuilt LACT artifacts for Vib, built in vos-ci-building." \
+            --title "LACT $LACT_VERSION (prebuilt, $WEEK)" \
+            --notes "Prebuilt LACT $LACT_VERSION artifacts for Vib, built in vos-ci-building in ISO week $WEEK." \
           || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber

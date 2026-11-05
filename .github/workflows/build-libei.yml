@@ -11,15 +11,42 @@ name: 'Build libei (prebuilt artifacts for Vib)'
 # tarball instead of rebuilding libei from source itself.
 
 on:
+  schedule:
+    # Fires every Monday; the gate job below lets only every other one through.
+    - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
       libei_min_version:
-        description: 'Minimum libei version to resolve a git tag for (e.g. 1.6.0)'
-        required: true
-        default: '1.6.0'
+        description: 'Minimum libei version to resolve a git tag for (e.g. 1.6.0). Empty = the default pinned in env below.'
+        required: false
+
+env:
+  # Scheduled runs have no inputs, so this default is also what they build.
+  LIBEI_MIN_VERSION: ${{ github.event.inputs.libei_min_version || '1.6.0' }}
 
 jobs:
+  # GitHub cron can't express "every two weeks", so the schedule fires weekly
+  # and this job skips every other scheduled run. The parity of whole weeks
+  # since the Unix epoch is stateless and stable across year boundaries (ISO
+  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
+  # a row). Manual runs always go through.
+  gate:
+    runs-on: ubuntu-26.04
+    outputs:
+      run: ${{ steps.parity.outputs.run }}
+    steps:
+      - id: parity
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Off week - skipping this scheduled run."
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -41,11 +68,10 @@ jobs:
         id: resolve
         run: |
           set -e
-          MIN_VERSION="${{ github.event.inputs.libei_min_version }}"
           TAG="$(git ls-remote --tags https://gitlab.freedesktop.org/libinput/libei.git \
-            | awk -F/ '{print $NF}' | grep -E "^(v)?${MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
+            | awk -F/ '{print $NF}' | grep -E "^(v)?${LIBEI_MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
           if [ -z "$TAG" ]; then
-            echo "::error::could not find a git tag matching libei ${MIN_VERSION} on gitlab.freedesktop.org/libinput/libei - check https://gitlab.freedesktop.org/libinput/libei/-/tags by hand."
+            echo "::error::could not find a git tag matching libei ${LIBEI_MIN_VERSION} on gitlab.freedesktop.org/libinput/libei - check https://gitlab.freedesktop.org/libinput/libei/-/tags by hand."
             exit 1
           fi
           echo "Resolved libei tag: $TAG"
@@ -67,8 +93,8 @@ jobs:
           # Sanity check: fail loudly if the staged .pc doesn't actually
           # satisfy the version we set out to build.
           PKG_CONFIG_PATH=/tmp/libei-stage/usr/lib/$(uname -m)-linux-gnu/pkgconfig:/tmp/libei-stage/usr/lib/pkgconfig \
-            pkg-config --atleast-version="${{ github.event.inputs.libei_min_version }}" libei-1.0 \
-            || PKG_CONFIG_PATH=/tmp/libei-stage/usr/lib/pkgconfig pkg-config --atleast-version="${{ github.event.inputs.libei_min_version }}" libei-1.0
+            pkg-config --atleast-version="$LIBEI_MIN_VERSION" libei-1.0 \
+            || PKG_CONFIG_PATH=/tmp/libei-stage/usr/lib/pkgconfig pkg-config --atleast-version="$LIBEI_MIN_VERSION" libei-1.0
 
       - name: Package artifact
         run: |
@@ -98,19 +124,21 @@ jobs:
         id: resolve
         run: |
           set -e
-          MIN_VERSION="${{ github.event.inputs.libei_min_version }}"
           TAG="$(git ls-remote --tags https://gitlab.freedesktop.org/libinput/libei.git \
-            | awk -F/ '{print $NF}' | grep -E "^(v)?${MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
+            | awk -F/ '{print $NF}' | grep -E "^(v)?${LIBEI_MIN_VERSION}(\^\{\})?$" | sed 's/\^{}//' | sort -u | tail -1)"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="libei-${{ steps.resolve.outputs.tag }}"
+          # One release per ISO week. Re-running within the same week finds the
+          # existing release and replaces its assets instead of failing.
+          WEEK="$(date -u +%G-W%V)"
+          TAG="libei-${{ steps.resolve.outputs.tag }}-$WEEK"
           sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
           gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
-            --title "libei ${{ steps.resolve.outputs.tag }} (prebuilt)" \
-            --notes "Prebuilt libei artifacts for Vib, built in vos-ci-building. No Debian suite packages libei >= ${{ github.event.inputs.libei_min_version }} yet (required by kdeconnect-kde's mousepad plugin)." \
+            --title "libei ${{ steps.resolve.outputs.tag }} (prebuilt, $WEEK)" \
+            --notes "Prebuilt libei artifacts for Vib, built in vos-ci-building in ISO week $WEEK. No Debian suite packages libei >= $LIBEI_MIN_VERSION yet (required by kdeconnect-kde's mousepad plugin)." \
           || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber

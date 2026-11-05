@@ -1,6 +1,11 @@
 name: 'VIB build for bootstrapping image'
 
 on:
+  schedule:
+    # Fires every Monday, a few hours before the build-*.yml workflows so
+    # they pick up the refreshed vanilla-ci-building image. The gate job
+    # below lets only every other one through.
+    - cron: '0 2 * * 1'
   workflow_dispatch:
 
 env:
@@ -8,7 +13,28 @@ env:
   BUILDX_NO_DEFAULT_ATTESTATIONS: 1
 
 jobs:
+  # GitHub cron can't express "every two weeks", so the schedule fires weekly
+  # and this job skips every other scheduled run. The parity of whole weeks
+  # since the Unix epoch is stateless and stable across year boundaries (ISO
+  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
+  # a row). Manual runs always go through.
+  gate:
+    runs-on: ubuntu-26.04
+    outputs:
+      run: ${{ steps.parity.outputs.run }}
+    steps:
+      - id: parity
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Off week - skipping this scheduled run."
+          fi
+
   check_update:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-26.04
 
     outputs:
