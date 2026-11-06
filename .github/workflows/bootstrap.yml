@@ -2,47 +2,27 @@ name: 'VIB build for bootstrapping image'
 
 on:
   schedule:
-    # Fires every Monday, a few hours before the build-*.yml workflows so
-    # they pick up the refreshed vanilla-ci-building image. The gate job
-    # below lets only every other one through.
+    # Mondays 02:00 UTC, a few hours before the build-*.yml workflows so they
+    # pick up a refreshed image. Scheduled runs only build when the base image
+    # changed (see check_update); manual runs always build.
     - cron: '0 2 * * 1'
   workflow_dispatch:
 
 env:
-  CUSTOM_IMAGE_NAME: vanilla-ci-building
+  IMAGE_URL: ghcr.io/${{ github.repository_owner }}/vanilla-ci-building
   BUILDX_NO_DEFAULT_ATTESTATIONS: 1
 
 jobs:
-  # GitHub cron can't express "every two weeks", so the schedule fires weekly
-  # and this job skips every other scheduled run. The parity of whole weeks
-  # since the Unix epoch is stateless and stable across year boundaries (ISO
-  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
-  # a row). Manual runs always go through.
-  gate:
-    runs-on: ubuntu-26.04
-    outputs:
-      run: ${{ steps.parity.outputs.run }}
-    steps:
-      - id: parity
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Off week - skipping this scheduled run."
-          fi
-
   check_update:
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-26.04
 
     outputs:
-      has_updates: ${{ steps.set_output.outputs.has_updates }}
+      has_updates: ${{ steps.compare.outputs.has_updates }}
       base_image: ${{ steps.read_base_recipe.outputs.base_image }}
 
     permissions:
-      contents: write # Allow actions to create a digest
+      contents: read
+      actions: read # find the last successful run and download its digest artifact
 
     steps:
       - name: Checkout code
@@ -57,15 +37,14 @@ jobs:
           # Stage 0 is the one built FROM the registry image; later stages
           # (e.g. initrd) use "base: build", which isn't a pullable image.
           BASE_IMAGE="$(fy-filter -f build-image.yml /stages/0/base)"
-          echo The base image is $BASE_IMAGE
-          if [ -z $BASE_IMAGE ]; then exit 1; fi
+          echo "The base image is $BASE_IMAGE"
+          [ -n "$BASE_IMAGE" ]
           echo "base_image=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
           echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
 
       - name: Get last successful run
-        if: ${{ github.ref_type == 'branch' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         continue-on-error: true
         run: |
           gh run list -b "${{ github.ref_name }}" -w "${{ github.workflow }}" -s "success" -L 1 --json databaseId > last_run.json
@@ -79,14 +58,22 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ env.LAST_RUN_ID }}
 
-      - name: Check if there was an update to the base image
+      # With no previous digest (first run, expired artifact) last_digest.txt is
+      # empty, so the comparison reports an update and the image gets built.
+      - name: Check if the base image was updated
+        id: compare
         run: |
           touch digest.txt
           mv digest.txt last_digest.txt
-          skopeo inspect --raw docker://${{ env.BASE_IMAGE }} | sha256sum > digest.txt
-          echo Old digest is: $(cat last_digest.txt)
-          echo New digest is: $(cat digest.txt)
-          echo "HAS_UPDATES=$(cmp -s digest.txt last_digest.txt; echo $?)" >> "$GITHUB_ENV"
+          skopeo inspect --raw "docker://$BASE_IMAGE" | sha256sum > digest.txt
+          echo "Old digest: $(cat last_digest.txt)"
+          echo "New digest: $(cat digest.txt)"
+          if [ "${{ github.event_name }}" != "schedule" ] || ! cmp -s digest.txt last_digest.txt; then
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No update to the base image since the last successful build."
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload current digest
         uses: actions/upload-artifact@v6
@@ -94,23 +81,10 @@ jobs:
           name: digest
           path: digest.txt
 
-      - name: Set output
-        id: set_output
-        run: |
-          if [ ${{ github.event_name == 'schedule'}} == false ]
-          then
-            echo action was manually run, updating either way
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-          elif [ ${{ env.HAS_UPDATES }} == 1 ]
-          then
-            echo base image was updated since the last build
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-          else
-            echo no updates to the base image since the last build
-            echo "has_updates=false" >> "$GITHUB_OUTPUT"
-          fi
-
+  # Without a base image update there is nothing to build: this job is skipped,
+  # and so are build and merge, which depend on it.
   verify_base_image:
+    if: needs.check_update.outputs.has_updates == 'true'
     runs-on: ubuntu-26.04
     needs:
       - check_update
@@ -133,7 +107,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs:
       - verify_base_image
-      - check_update
     permissions:
       packages: write # Allow pushing images to GHCR
       attestations: write # To create and write attestations
@@ -152,36 +125,6 @@ jobs:
         docker system prune -af || true
         df -h
 
-    - name: Check base image architecture support
-      run: |
-        BASE_IMAGE="${{ needs.check_update.outputs.base_image }}"
-        TARGET_ARCH="${{ matrix.arch }}"
-        echo "Checking if $BASE_IMAGE supports the $TARGET_ARCH architecture..."
-        MANIFEST=$(skopeo inspect --raw docker://$BASE_IMAGE | jq -r '.')
-
-        if echo "$MANIFEST" | jq -e '.manifests' > /dev/null 2>&1; then
-          if echo "$MANIFEST" | jq -e ".manifests[] | select(.platform.architecture==\"$TARGET_ARCH\")" > /dev/null 2>&1; then
-            echo "Base image supports $TARGET_ARCH architecture. Continuing"
-          else
-            echo "Base image does NOT support $TARGET_ARCH architecture. Stopping here."
-            echo "Supported architectures:"
-            echo "$MANIFEST" | jq -r '.manifests[].platform.architecture' | sort | uniq
-            exit 1
-          fi
-        else
-          IMAGE_ARCH=$(echo "$MANIFEST" | jq -r '.architecture')
-          if [ "$IMAGE_ARCH" = "null" ]; then
-            IMAGE_ARCH="amd64"
-            echo "Architecture field is null, assuming amd64"
-          fi
-          if [ "$IMAGE_ARCH" = "$TARGET_ARCH" ]; then
-            echo "Base image supports $TARGET_ARCH architecture. Continuing"
-          else
-            echo "Base image only supports $IMAGE_ARCH, but we're building for $TARGET_ARCH. Stopping here"
-            exit 1
-          fi
-        fi
-
     - uses: vanilla-os/vib-gh-action@main
       with:
         recipe: 'build-image.yml'
@@ -193,12 +136,6 @@ jobs:
         name: Containerfile-${{ matrix.arch }}
         path: Containerfile
         overwrite: true
-
-    - name: Generate image name
-      run: |
-        REPO_OWNER_LOWERCASE="$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')"
-        echo "REPO_OWNER_LOWERCASE=$REPO_OWNER_LOWERCASE" >> "$GITHUB_ENV"
-        echo "IMAGE_URL=ghcr.io/$REPO_OWNER_LOWERCASE/$CUSTOM_IMAGE_NAME" >> "$GITHUB_ENV"
 
     - name: Docker meta
       id: meta
@@ -271,11 +208,6 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-*
           merge-multiple: true
-
-      - name: Generate image name
-        run: |
-          REPO_OWNER_LOWERCASE="$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE_URL=ghcr.io/$REPO_OWNER_LOWERCASE/$CUSTOM_IMAGE_NAME" >> "$GITHUB_ENV"
 
       - name: Docker meta
         id: meta

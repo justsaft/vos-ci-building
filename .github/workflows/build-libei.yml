@@ -12,7 +12,8 @@ name: 'Build libei (prebuilt artifacts for Vib)'
 
 on:
   schedule:
-    # Fires every Monday; the gate job below lets only every other one through.
+    # Every Monday, a few hours after bootstrap.yml has had a chance to refresh the image.
+    # Weekly keeps the build close to upstream libei, which kdeconnect-kde tracks.
     - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
@@ -25,28 +26,7 @@ env:
   LIBEI_MIN_VERSION: ${{ github.event.inputs.libei_min_version || '1.6.0' }}
 
 jobs:
-  # GitHub cron can't express "every two weeks", so the schedule fires weekly
-  # and this job skips every other scheduled run. The parity of whole weeks
-  # since the Unix epoch is stateless and stable across year boundaries (ISO
-  # week numbers are not: 2026 has 53 weeks, so W53 -> W01 would run twice in
-  # a row). Manual runs always go through.
-  gate:
-    runs-on: ubuntu-26.04
-    outputs:
-      run: ${{ steps.parity.outputs.run }}
-    steps:
-      - id: parity
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ] || [ $(( $(date -u +%s) / 604800 % 2 )) -eq 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Off week - skipping this scheduled run."
-          fi
-
   build:
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
