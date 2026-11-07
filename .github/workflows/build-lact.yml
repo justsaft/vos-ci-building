@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       lact_version:
-        description: 'LACT git tag to build (e.g. v0.10.1). Empty = the default pinned in env below.'
+        description: 'LACT git tag to build (e.g. v0.10.1). Empty or "latest" = the default pinned in env below.'
         required: false
 
 env:
   # Scheduled runs have no inputs, so this default is also what they build.
   # Bump it here to move the biweekly builds to a newer LACT.
-  LACT_VERSION: ${{ github.event.inputs.lact_version || 'v0.10.1' }}
+  LACT_VERSION: ${{ (github.event.inputs.lact_version != 'latest' && github.event.inputs.lact_version) || 'v0.10.1' }}
 
 jobs:
   # GitHub cron can't express "every two weeks", so the schedule fires weekly
@@ -101,13 +101,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # One release per ISO week. Re-running within the same week finds the
-          # existing release and replaces its assets instead of failing.
           WEEK="$(date -u +%G-W%V)"
           TAG="lact-$LACT_VERSION-$WEEK"
+          # Releases are immutable: a published release's assets and tag can never
+          # change, and a deleted one burns its tag name forever. So publish once
+          # per tag, never clobber, and skip when the tag is already taken.
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "::notice::Tag $TAG already exists (releases are immutable) - skipping. It is rebuilt under a new ISO week."
+            exit 0
+          fi
           sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
-          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS --draft \
             --repo "${{ github.repository }}" \
             --title "LACT $LACT_VERSION (prebuilt, $WEEK)" \
-            --notes "Prebuilt LACT $LACT_VERSION artifacts for Vib, built in vos-ci-building in ISO week $WEEK." \
-          || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
+            --notes "Prebuilt LACT $LACT_VERSION artifacts for Vib, built in vos-ci-building in ISO week $WEEK."
+          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false

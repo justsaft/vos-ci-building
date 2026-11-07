@@ -112,13 +112,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # One release per ISO week. Re-running within the same week finds the
-          # existing release and replaces its assets instead of failing.
           WEEK="$(date -u +%G-W%V)"
           TAG="libei-${{ steps.resolve.outputs.tag }}-$WEEK"
+          # Releases are immutable: a published release's assets and tag can never
+          # change, and a deleted one burns its tag name forever. So publish once
+          # per tag, never clobber, and skip when the tag is already taken.
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "::notice::Tag $TAG already exists (releases are immutable) - skipping. It is rebuilt under a new ISO week."
+            exit 0
+          fi
           sha256sum dist/*.tar.gz | tee dist/SHA256SUMS
-          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+          # Draft -> attach assets -> publish, the order immutable releases need.
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS --draft \
             --repo "${{ github.repository }}" \
             --title "libei ${{ steps.resolve.outputs.tag }} (prebuilt, $WEEK)" \
-            --notes "Prebuilt libei artifacts for Vib, built in vos-ci-building in ISO week $WEEK. No Debian suite packages libei >= $LIBEI_MIN_VERSION yet (required by kdeconnect-kde's mousepad plugin)." \
-          || gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --repo "${{ github.repository }}" --clobber
+            --notes "Prebuilt libei artifacts for Vib, built in vos-ci-building in ISO week $WEEK. No Debian suite packages libei >= $LIBEI_MIN_VERSION yet (required by kdeconnect-kde's mousepad plugin)."
+          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
